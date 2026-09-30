@@ -1,0 +1,138 @@
+scalar DateTime
+
+interface Node {
+  id: ID!
+}
+
+interface Timestamped {
+  createdAt: DateTime!
+  updatedAt: DateTime
+}
+
+interface Content implements Node {
+  id: ID!
+  title: String!
+}
+
+enum Status {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum Role {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+type User implements Node & Timestamped {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime
+  name: String!
+  email: String
+  role: Role!
+  posts: [Post!]!
+}
+
+type Post implements Node & Content & Timestamped {
+  id: ID!
+  title: String!
+  createdAt: DateTime!
+  updatedAt: DateTime
+  status: Status!
+  body: String
+  author: User!
+  tags: [Tag!]!
+  comments: [Comment!]!
+  attachments: [Attachment!]!
+}
+
+type Page implements Node & Content & Timestamped {
+  id: ID!
+  title: String!
+  createdAt: DateTime!
+  updatedAt: DateTime
+  slug: String!
+  status: Status!
+}
+
+type Comment implements Node & Timestamped {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime
+  text: String!
+  author: User
+}
+
+type Tag implements Node {
+  id: ID!
+  label: String!
+}
+
+type Image {
+  url: String!
+  width: Int!
+  height: Int!
+}
+
+type Video {
+  url: String!
+  durationSeconds: Float!
+}
+
+type Document {
+  url: String!
+  pageCount: Int
+}
+
+union Attachment = Image | Video | Document
+
+union SearchResult = Post | Page | User | Comment | Tag
+
+input PaginationInput {
+  limit: Int
+  offset: Int
+}
+
+input PostFilterInput {
+  status: Status
+  authorId: ID
+  tagIds: [ID!]
+  pagination: PaginationInput
+}
+
+input CreatePostInput {
+  title: String!
+  body: String
+  status: Status!
+  tagIds: [ID!]
+}
+
+input UpdatePostInput {
+  id: ID!
+  title: String
+  body: String
+  status: Status
+}
+
+type Query {
+  node(id: ID!): Node
+  post(id: ID!): Post
+  posts(filter: PostFilterInput): [Post!]!
+  contents(status: Status): [Content!]!
+  search(term: String!): [SearchResult!]!
+  me: User
+}
+
+type Mutation {
+  createPost(input: CreatePostInput!): Post!
+  updatePost(input: UpdatePostInput!): Post
+  deletePost(id: ID!): Boolean!
+}
+
+type Subscription {
+  postUpdated(id: ID!): Post!
+  searchUpdated(term: String!): SearchResult!
+}

@@ -1,0 +1,102 @@
+query getPost($id: ID!) {
+  post(id: $id) {
+    ...PostDetails
+  }
+}
+
+query listPosts($filter: PostFilterInput) {
+  posts(filter: $filter) {
+    ...PostSummary
+    ...Timestamps
+    author {
+      ...UserSummary
+    }
+    tags {
+      ...TagLabel
+    }
+  }
+}
+
+query listContents($status: Status) {
+  contents(status: $status) {
+    __typename
+    id
+    title
+    ... on Post {
+      ...PostSummary
+    }
+    ... on Page {
+      ...PageSummary
+    }
+  }
+}
+
+query search($term: String!) {
+  search(term: $term) {
+    __typename
+    ... on Post {
+      ...PostSummary
+    }
+    ... on Page {
+      ...PageSummary
+    }
+    ... on User {
+      ...UserSummary
+    }
+    ... on Comment {
+      ...CommentDetails
+    }
+    ... on Tag {
+      ...TagLabel
+    }
+  }
+}
+
+query getNode($id: ID!) {
+  node(id: $id) {
+    __typename
+    id
+    ... on User {
+      ...UserDetails
+    }
+    ... on Tag {
+      ...TagLabel
+    }
+  }
+}
+
+query me {
+  me {
+    ...UserDetails
+    posts {
+      ...PostSummary
+    }
+  }
+}
+
+query postWithTypename($id: ID!) {
+  post(id: $id) {
+    __typename
+    ...PostSummary
+  }
+}
+
+query recentPosts {
+  posts {
+    id
+    title
+    author {
+      id
+      name
+    }
+  }
+}
+
+query topPosts {
+  posts {
+    id
+    author {
+      email
+    }
+  }
+}

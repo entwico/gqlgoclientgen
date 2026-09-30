@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj
+
+version: 2
+
+snapshot:
+  version_template: '{{ .FullCommit }}-SNAPSHOT'
+
+builds:
+  - id: "gqlgoclientgen"
+    main: "./cmd/gqlgoclientgen"
+    binary: "gqlgoclientgen"
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X {{.ModulePath}}/cmd/gqlgoclientgen/cmd.Version={{.Version}} -X {{.ModulePath}}/cmd/gqlgoclientgen/cmd.Commit={{.ShortCommit}} -X {{.ModulePath}}/cmd/gqlgoclientgen/cmd.BuildDate={{.Date}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

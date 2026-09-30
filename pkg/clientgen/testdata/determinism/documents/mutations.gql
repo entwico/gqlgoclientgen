@@ -1,0 +1,16 @@
+mutation createPost($input: CreatePostInput!) {
+  createPost(input: $input) {
+    ...PostDetails
+  }
+}
+
+mutation updatePost($input: UpdatePostInput!) {
+  updatePost(input: $input) {
+    ...PostSummary
+    ...Timestamps
+  }
+}
+
+mutation deletePost($id: ID!) {
+  deletePost(id: $id)
+}

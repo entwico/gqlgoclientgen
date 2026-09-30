@@ -1,0 +1,18 @@
+subscription watchPost($id: ID!) {
+  postUpdated(id: $id) {
+    ...PostDetails
+  }
+}
+
+subscription watchSearch($term: String!) {
+  searchUpdated(term: $term) {
+    __typename
+    ... on Post {
+      ...PostSummary
+      ...Timestamps
+    }
+    ... on User {
+      ...UserSummary
+    }
+  }
+}

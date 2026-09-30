@@ -1,0 +1,82 @@
+fragment Timestamps on Timestamped {
+  createdAt
+  updatedAt
+}
+
+fragment UserSummary on User {
+  id
+  name
+  role
+}
+
+fragment UserDetails on User {
+  ...UserSummary
+  ...Timestamps
+  email
+}
+
+fragment TagLabel on Tag {
+  id
+  label
+}
+
+fragment CommentDetails on Comment {
+  id
+  text
+  ...Timestamps
+  author {
+    ...UserSummary
+  }
+}
+
+fragment ImageDetails on Image {
+  url
+  width
+  height
+}
+
+fragment VideoDetails on Video {
+  url
+  durationSeconds
+}
+
+fragment PostSummary on Post {
+  id
+  title
+  status
+}
+
+fragment PostDetails on Post {
+  ...PostSummary
+  ...Timestamps
+  body
+  author {
+    ...UserDetails
+  }
+  tags {
+    ...TagLabel
+  }
+  comments {
+    ...CommentDetails
+  }
+  attachments {
+    __typename
+    ... on Image {
+      ...ImageDetails
+    }
+    ... on Video {
+      ...VideoDetails
+    }
+    ... on Document {
+      url
+      pageCount
+    }
+  }
+}
+
+fragment PageSummary on Page {
+  id
+  title
+  slug
+  status
+}

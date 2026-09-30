@@ -1,0 +1,83 @@
+version: '3'
+
+output: 'group'
+
+vars:
+  PROJECT_NAME: gqlgoclientgen
+  PROJECT_NAMESPACE: entwico
+  PROJECT: github.com/{{.PROJECT_NAMESPACE}}/{{.PROJECT_NAME}}
+  BUILD_DIR: dist
+  CLI_NAME: gqlgoclientgen
+  CLI_PATH: ./cmd/{{.CLI_NAME}}
+  BUILDTAGS: ""
+
+tasks:
+  default:
+    cmds:
+      - task: build
+
+  build:
+    desc: Build the CLI tool
+    cmds:
+      - task: clean
+      - echo "==> Compiling..."
+      - goreleaser -v
+      - goreleaser build --clean --snapshot
+
+  clean:
+    cmds:
+      - echo "==> Cleaning BUILD_DIR..."
+      - rm -rf {{.BUILD_DIR}}/*
+
+  test:
+    deps: [clean]
+    cmds:
+      - echo "==> Testing code..."
+      - mkdir -p {{.BUILD_DIR}}
+      - go test -v -race -tags "{{.BUILDTAGS}} cgo" -coverprofile=./{{.BUILD_DIR}}/coverage.out $(go list ./... | grep -v /cmd/)
+      - go tool cover -html=./{{.BUILD_DIR}}/coverage.out -o ./{{.BUILD_DIR}}/coverage.html
+
+  lint:
+    desc: Run linter
+    cmds:
+      - echo "Running linter..."
+      - golangci-lint version
+      - golangci-lint run
+
+  test-generated:
+    desc: Generate a client from the test fixture and compile it
+    cmds:
+      - echo "==> Generating client from fixture..."
+      - rm -rf {{.BUILD_DIR}}/genclient
+      - go run {{.CLI_PATH}} generate --schema pkg/clientgen/testdata/determinism/schema.graphql --documents pkg/clientgen/testdata/determinism/documents --pkg genclient --out {{.BUILD_DIR}}/genclient
+      - echo "==> Compiling generated client..."
+      - cd {{.BUILD_DIR}}/genclient && go mod init example.com/genclient && go mod tidy && go build ./... && go vet ./...
+
+  test-integration:
+    desc: Generate a client from the fixture and run the graphql-ws integration tests against a fake server
+    cmds:
+      - echo "==> Generating integration test client..."
+      - go run {{.CLI_PATH}} generate --schema pkg/clientgen/testdata/determinism/schema.graphql --documents pkg/clientgen/testdata/determinism/documents --pkg testclient --out integration/testclient
+      - echo "==> Running integration tests..."
+      - cd integration && go mod tidy && go test -race -timeout 60s ./...
+
+  test-sample:
+    desc: Regenerate the local sample client and run its integration tests (needs the untracked misc/ directory)
+    cmds:
+      - echo "==> Regenerating sample client..."
+      - go run {{.CLI_PATH}} generate --schema misc/uw-schema.json --documents misc/graphql --pkg testclient --out misc/myproject/testclient
+      - echo "==> Testing sample project..."
+      - cd misc/myproject && go build ./... && go test -race -timeout 60s ./...
+
+  install:
+    desc: Install CLI to GOPATH/bin
+    cmds:
+      - echo "Installing CLI..."
+      - go install ./cmd/gqlgoclientgen
+      - echo "CLI installed as gqlgoclientgen"
+
+  serve-docs:
+    desc: Serve godoc and open browser
+    cmds:
+      - echo "Serving docs..."
+      - pkgsite -open .

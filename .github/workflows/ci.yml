@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race -coverprofile=coverage.out ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.1
+
+  generated-code:
+    name: Generated code compiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generate client from fixture
+        run: |
+          go run ./cmd/gqlgoclientgen generate \
+            --schema pkg/clientgen/testdata/determinism/schema.graphql \
+            --documents pkg/clientgen/testdata/determinism/documents \
+            --pkg genclient --out /tmp/genclient
+
+      - name: Compile generated client
+        run: |
+          cd /tmp/genclient
+          go mod init example.com/genclient
+          go mod tidy
+          go build ./...
+          go vet ./...
+
+  integration:
+    name: Subscription integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Generate integration test client
+        run: |
+          go run ./cmd/gqlgoclientgen generate \
+            --schema pkg/clientgen/testdata/determinism/schema.graphql \
+            --documents pkg/clientgen/testdata/determinism/documents \
+            --pkg testclient --out integration/testclient
+
+      - name: Run integration tests
+        run: |
+          cd integration
+          go mod tidy
+          go test -race -timeout 60s ./...
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, lint, generated-code, integration]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
