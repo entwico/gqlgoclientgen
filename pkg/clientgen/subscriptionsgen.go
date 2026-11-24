@@ -177,6 +177,11 @@ func (og *operationsGenerator) generateSubscriptionMethod(op *ast.OperationDefin
 		jen.Id("subscriptionID").Op("=").Id("id"),
 		jen.Id("mu").Dot("Unlock").Call(),
 		jen.If(jen.Id("err").Op("!=").Nil()).Block(
+			jen.Comment("the library registers a subscription before it sends it; left registered, it"),
+			jen.Comment("would be sent again on every reconnect, to a handler nobody reads from"),
+			jen.If(jen.Id("id").Op("!=").Lit("")).Block(
+				jen.Id("_").Op("=").Id("s").Dot("client").Dot("subscriptionClient").Dot("Unsubscribe").Call(jen.Id("id")),
+			),
 			jen.Return(jen.Nil(), jen.Qual("fmt", "Errorf").Call(
 				jen.Lit("failed to start subscription (is the subscription client running?): %w"),
 				jen.Id("err"),

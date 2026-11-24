@@ -1409,6 +1409,11 @@ fragment VideoDetails on Video {
 	subscriptionID = id
 	mu.Unlock()
 	if err != nil {
+		// the library registers a subscription before it sends it; left registered, it
+		// would be sent again on every reconnect, to a handler nobody reads from
+		if id != "" {
+			_ = s.client.subscriptionClient.Unsubscribe(id)
+		}
 		return nil, fmt.Errorf("failed to start subscription (is the subscription client running?): %w", err)
 	}
 
@@ -1587,6 +1592,11 @@ fragment UserSummary on User {
 	subscriptionID = id
 	mu.Unlock()
 	if err != nil {
+		// the library registers a subscription before it sends it; left registered, it
+		// would be sent again on every reconnect, to a handler nobody reads from
+		if id != "" {
+			_ = s.client.subscriptionClient.Unsubscribe(id)
+		}
 		return nil, fmt.Errorf("failed to start subscription (is the subscription client running?): %w", err)
 	}
 

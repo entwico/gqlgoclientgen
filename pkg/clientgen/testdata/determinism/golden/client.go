@@ -21,6 +21,13 @@ import (
 // GraphQL "complete"; an iterator that yields a non-nil error did not.
 var ErrSubscriptionTransport = errors.New("subscription transport error")
 
+var (
+	// errConnectionLost ends the subscriptions that outlived their connection.
+	errConnectionLost = errors.New("connection lost")
+	// errRunEnded reports a library Run loop that returned without an error.
+	errRunEnded = errors.New("subscription client stopped")
+)
+
 // subscriptionMessage carries either one data payload or a terminal error over a
 // subscription's internal channel.
 type subscriptionMessage struct {
@@ -259,15 +266,53 @@ func (c *Client) StartSubscriptionClient(ctx context.Context, opts ...Subscripti
 	// reconnection loop waits on it instead of polling
 	disconnected := make(chan struct{}, 1)
 
+	// lost is true while there is no connection. It turns every change from
+	// connected to lost into exactly one signal for the reconnection loop, however
+	// many of the paths below report the same drop
+	var lost atomic.Bool
+	lost.Store(true)
+
+	markLost := func() {
+		if !lost.CompareAndSwap(false, true) {
+			return
+		}
+
+		c.subscriptionMutex.Lock()
+		c.subscriptionClientRunning = false
+		c.subscriptionMutex.Unlock()
+		// wake the reconnection loop; the buffer keeps repeat signals from blocking
+		select {
+		case disconnected <- struct{}{}:
+		default:
+		}
+
+		if config.onConnectionLost != nil {
+			config.onConnectionLost()
+		}
+	}
+
+	// stopRun ends the library Run loop of the previous connection attempt. It is
+	// only used by connectOnce, whose calls never overlap
+	var stopRun func()
+
 	// connectOnce establishes a single connection attempt
 	connectOnce := func() error {
-		// hasConnected is written by OnConnected and read by OnDisconnected,
-		// which run on library goroutines
-		var hasConnected atomic.Bool
-
 		// the fluent configuration methods mutate and return the same instance,
 		// so the client field itself is never reassigned at runtime
 		sc := c.subscriptionClient
+
+		// the library client supports one Run loop at a time: a second one shares
+		// its error channel and session with the first, and a drop reported to the
+		// wrong loop is lost. The previous loop therefore ends before the client is
+		// configured and run again
+		if stopRun != nil {
+			stopRun()
+		}
+
+		// subscriptions still registered belong to a connection that is gone; their
+		// iterators would otherwise wait for data that cannot arrive
+		failSubscriptions(sc, errConnectionLost)
+
 		sc.WithExitWhenNoSubscription(false).WithSyncMode(true)
 
 		// connected is buffered so the signal is never dropped when OnConnected
@@ -293,7 +338,7 @@ func (c *Client) StartSubscriptionClient(ctx context.Context, opts ...Subscripti
 			// handled by the reconnection loop, re-subscribing is the caller's responsibility.
 			return err
 		}).OnConnected(func() {
-			hasConnected.Store(true)
+			lost.Store(false)
 			hasEverConnected.Store(true)
 			c.subscriptionMutex.Lock()
 			c.subscriptionClientRunning = true
@@ -307,28 +352,39 @@ func (c *Client) StartSubscriptionClient(ctx context.Context, opts ...Subscripti
 			case connected <- struct{}{}:
 			default:
 			}
-		}).OnDisconnected(func() {
-			c.subscriptionMutex.Lock()
-			c.subscriptionClientRunning = false
-			c.subscriptionMutex.Unlock()
-			// wake the reconnection loop; the buffer keeps repeat signals from blocking
+		}).OnDisconnected(markLost)
+
+		runCtx, cancelRun := context.WithCancel(ctx)
+		runDone := make(chan struct{})
+
+		stopRun = func() {
+			cancelRun()
+
+			// a Run loop blocked inside a callback never returns; the next attempt
+			// must not wait for it forever
 			select {
-			case disconnected <- struct{}{}:
-			default:
+			case <-runDone:
+			case <-time.After(config.timeout):
 			}
-			// only call connection lost if we had connected
-			if hasConnected.Load() && config.onConnectionLost != nil {
-				config.onConnectionLost()
-			}
-		})
+		}
 
 		// start the subscription client in a goroutine
 		go func() {
-			if err := sc.Run(); err != nil {
-				select {
-				case runError <- err:
-				default:
-				}
+			defer close(runDone)
+
+			err := sc.RunWithContext(runCtx)
+
+			// the library has several ways to leave Run without reporting a
+			// disconnect; its return is the one signal that always comes
+			markLost()
+
+			if err == nil {
+				err = errRunEnded
+			}
+
+			select {
+			case runError <- err:
+			default:
 			}
 		}()
 
@@ -341,15 +397,15 @@ func (c *Client) StartSubscriptionClient(ctx context.Context, opts ...Subscripti
 			return nil
 		case err := <-runError:
 			// error occurred before connection
-			sc.Close()
+			stopRun()
 			return err
 		case <-ctx.Done():
 			// context cancelled before connection
-			sc.Close()
+			stopRun()
 			return errors.New("context cancelled before subscription client could connect")
 		case <-connectionTimeout:
 			// connection timeout
-			sc.Close()
+			stopRun()
 			return fmt.Errorf("timeout waiting for subscription client to connect after %v", config.timeout)
 		}
 	}
@@ -398,6 +454,19 @@ func (c *Client) StartSubscriptionClient(ctx context.Context, opts ...Subscripti
 	}
 
 	return nil
+}
+
+// failSubscriptions ends every subscription still registered with a transport error.
+// Each handler runs on its own goroutine: it waits for its consumer, and one consumer
+// that stopped reading must not hold up the reconnect.
+func failSubscriptions(sc *gographqlclient.SubscriptionClient, cause error) {
+	transportErr := fmt.Errorf("%w: %w", ErrSubscriptionTransport, cause)
+
+	for _, sub := range sc.GetSubscriptions() {
+		if handler := sub.GetHandler(); handler != nil {
+			go handler(nil, transportErr)
+		}
+	}
 }
 
 // runReconnectionLoop handles automatic reconnection with backoff
