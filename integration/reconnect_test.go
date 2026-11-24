@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -256,7 +257,7 @@ func requireLoadsAgain(t *testing.T, client *testclient.Client, after string) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	t.Fatalf("no load completed within %s after %s: the client did not reconnect", reconnectWait, after)
+	t.Fatalf("no load completed within %s after %s: the client did not reconnect\n%s", reconnectWait, after, goroutineDump())
 }
 
 func requireCount(t *testing.T, counter *atomic.Int32, atLeast int32, what string) {
@@ -271,7 +272,14 @@ func requireCount(t *testing.T, counter *atomic.Int32, atLeast int32, what strin
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	t.Fatalf("%s: got %d, want at least %d", what, counter.Load(), atLeast)
+	t.Fatalf("%s: got %d, want at least %d\n%s", what, counter.Load(), atLeast, goroutineDump())
+}
+
+// goroutineDump shows where a client is stuck when a reconnect does not happen.
+func goroutineDump() string {
+	buf := make([]byte, 1<<20)
+
+	return string(buf[:runtime.Stack(buf, true)])
 }
 
 // TestReconnect_SurvivesRepeatedServerRestarts: every restart of the server is followed by

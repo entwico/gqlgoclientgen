@@ -291,20 +291,58 @@ func (c *Client) StartSubscriptionClient(ctx context.Context, opts ...Subscripti
 		}
 	}
 
+	// connected is buffered so the signal is never dropped when OnConnected fires
+	// before connectOnce waits for it
+	connected := make(chan struct{}, 1)
+
+	// the library client is configured once, before its first Run: its fields are
+	// read without synchronisation by the Run loop and by subscription handlers, so
+	// writing them again on a reconnect would race with both
+	sc := c.subscriptionClient
+	sc.WithExitWhenNoSubscription(false).WithSyncMode(true)
+
+	sc.OnSubscriptionComplete(func(sub gographqlclient.Subscription) {
+		if handler := sub.GetHandler(); handler != nil {
+			handler(nil, io.EOF)
+		}
+	}).OnError(func(sc *gographqlclient.SubscriptionClient, err error) error {
+		// deliver the real error to all active subscriptions, wrapped in
+		// ErrSubscriptionTransport. Never send io.EOF here: io.EOF is reserved for a
+		// genuine server-sent GraphQL "complete" (see OnSubscriptionComplete above).
+		// The handlers are not waited for: this callback runs inside the library's Run
+		// loop, and a handler whose consumer is not reading would hold that loop, and
+		// with it the reconnect, for as long as the consumer stays away.
+		failSubscriptions(sc, err)
+		// returning err tells the library to close; reconnection of the websocket is
+		// handled by the reconnection loop, re-subscribing is the caller's responsibility.
+		return err
+	}).OnConnected(func() {
+		lost.Store(false)
+		hasEverConnected.Store(true)
+		c.subscriptionMutex.Lock()
+		c.subscriptionClientRunning = true
+		c.subscriptionMutex.Unlock()
+		// call user callback if set
+		if config.onConnected != nil {
+			config.onConnected()
+		}
+		// signal that we're connected; the buffer keeps repeat signals from blocking
+		select {
+		case connected <- struct{}{}:
+		default:
+		}
+	}).OnDisconnected(markLost)
+
 	// stopRun ends the library Run loop of the previous connection attempt. It is
 	// only used by connectOnce, whose calls never overlap
 	var stopRun func()
 
 	// connectOnce establishes a single connection attempt
 	connectOnce := func() error {
-		// the fluent configuration methods mutate and return the same instance,
-		// so the client field itself is never reassigned at runtime
-		sc := c.subscriptionClient
-
 		// the library client supports one Run loop at a time: a second one shares
 		// its error channel and session with the first, and a drop reported to the
-		// wrong loop is lost. The previous loop therefore ends before the client is
-		// configured and run again
+		// wrong loop is lost. The previous loop therefore ends before the next one
+		// starts
 		if stopRun != nil {
 			stopRun()
 		}
@@ -313,46 +351,13 @@ func (c *Client) StartSubscriptionClient(ctx context.Context, opts ...Subscripti
 		// iterators would otherwise wait for data that cannot arrive
 		failSubscriptions(sc, errConnectionLost)
 
-		sc.WithExitWhenNoSubscription(false).WithSyncMode(true)
+		// a signal of an earlier attempt must not pass for this one
+		select {
+		case <-connected:
+		default:
+		}
 
-		// connected is buffered so the signal is never dropped when OnConnected
-		// fires before the select below is reached
-		connected := make(chan struct{}, 1)
 		runError := make(chan error, 1)
-
-		sc.OnSubscriptionComplete(func(sub gographqlclient.Subscription) {
-			if handler := sub.GetHandler(); handler != nil {
-				handler(nil, io.EOF)
-			}
-		}).OnError(func(sc *gographqlclient.SubscriptionClient, err error) error {
-			// deliver the real error to all active subscriptions, wrapped in
-			// ErrSubscriptionTransport. Never send io.EOF here: io.EOF is reserved for a
-			// genuine server-sent GraphQL "complete" (see OnSubscriptionComplete above).
-			transportErr := fmt.Errorf("%w: %w", ErrSubscriptionTransport, err)
-			for _, sub := range sc.GetSubscriptions() {
-				if handler := sub.GetHandler(); handler != nil {
-					handler(nil, transportErr)
-				}
-			}
-			// returning err tells the library to close; reconnection of the websocket is
-			// handled by the reconnection loop, re-subscribing is the caller's responsibility.
-			return err
-		}).OnConnected(func() {
-			lost.Store(false)
-			hasEverConnected.Store(true)
-			c.subscriptionMutex.Lock()
-			c.subscriptionClientRunning = true
-			c.subscriptionMutex.Unlock()
-			// call user callback if set
-			if config.onConnected != nil {
-				config.onConnected()
-			}
-			// signal that we're connected; the buffer keeps repeat signals from blocking
-			select {
-			case connected <- struct{}{}:
-			default:
-			}
-		}).OnDisconnected(markLost)
 
 		runCtx, cancelRun := context.WithCancel(ctx)
 		runDone := make(chan struct{})

@@ -43,9 +43,19 @@ func TestClientTemplate_OnErrorWrapsTransportError(t *testing.T) {
 	require.GreaterOrEqual(t, onErrorEnd, 0, "OnError callback end not found")
 	onErrorBody := out[onErrorStart : onErrorStart+onErrorEnd]
 
-	assert.Contains(t, onErrorBody, `fmt.Errorf("%w: %w", ErrSubscriptionTransport, err)`)
-	assert.Contains(t, onErrorBody, "handler(nil, transportErr)")
+	assert.Contains(t, onErrorBody, "failSubscriptions(sc, err)")
 	assert.NotContains(t, onErrorBody, "handler(nil, io.EOF)")
+
+	// the delivery wraps the error and does not wait for the handlers: OnError runs
+	// inside the library's Run loop, which a waiting handler would hold
+	failStart := strings.Index(out, "func failSubscriptions(")
+	require.GreaterOrEqual(t, failStart, 0, "failSubscriptions not found in output")
+	failEnd := strings.Index(out[failStart:], "\n}\n")
+	require.GreaterOrEqual(t, failEnd, 0, "failSubscriptions end not found")
+	failBody := out[failStart : failStart+failEnd]
+
+	assert.Contains(t, failBody, `fmt.Errorf("%w: %w", ErrSubscriptionTransport, cause)`)
+	assert.Contains(t, failBody, "go handler(nil, transportErr)")
 
 	// the OnSubscriptionComplete callback remains the only source of io.EOF
 	completeStart := strings.Index(out, "OnSubscriptionComplete(func")

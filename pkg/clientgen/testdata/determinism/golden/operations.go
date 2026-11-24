@@ -1407,6 +1407,11 @@ fragment VideoDetails on Video {
 	mu.Lock()
 	id, err := s.client.subscriptionClient.Exec(subscription, vars, handler)
 	subscriptionID = id
+	if err != nil {
+		// no iterator will ever read from this subscription: a handler that is already
+		// waiting for mu must return instead of waiting for a consumer
+		channelClosed = true
+	}
 	mu.Unlock()
 	if err != nil {
 		// the library registers a subscription before it sends it; left registered, it
@@ -1590,6 +1595,11 @@ fragment UserSummary on User {
 	mu.Lock()
 	id, err := s.client.subscriptionClient.Exec(subscription, vars, handler)
 	subscriptionID = id
+	if err != nil {
+		// no iterator will ever read from this subscription: a handler that is already
+		// waiting for mu must return instead of waiting for a consumer
+		channelClosed = true
+	}
 	mu.Unlock()
 	if err != nil {
 		// the library registers a subscription before it sends it; left registered, it

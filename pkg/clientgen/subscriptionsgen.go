@@ -175,6 +175,11 @@ func (og *operationsGenerator) generateSubscriptionMethod(op *ast.OperationDefin
 			jen.Id("handler"),
 		),
 		jen.Id("subscriptionID").Op("=").Id("id"),
+		jen.If(jen.Id("err").Op("!=").Nil()).Block(
+			jen.Comment("no iterator will ever read from this subscription: a handler that is already"),
+			jen.Comment("waiting for mu must return instead of waiting for a consumer"),
+			jen.Id("channelClosed").Op("=").True(),
+		),
 		jen.Id("mu").Dot("Unlock").Call(),
 		jen.If(jen.Id("err").Op("!=").Nil()).Block(
 			jen.Comment("the library registers a subscription before it sends it; left registered, it"),
